@@ -1,16 +1,23 @@
-use std::{mem::MaybeUninit, sync::OnceLock};
+use std::{
+    mem::MaybeUninit,
+    sync::{
+        OnceLock,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
 use anyhow::{Context, Result, anyhow};
-use crossbeam_channel::Sender;
+use crossbeam_channel::{Receiver, Sender};
 use windows::{
     Win32::{
         Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM},
         System::LibraryLoader::GetModuleHandleW,
         UI::WindowsAndMessaging::{
             CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
-            HWND_MESSAGE, KillTimer, MSG, PostQuitMessage, RegisterClassW, SetTimer,
-            TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WM_CLOSE, WM_DESTROY, WM_ENDSESSION,
-            WM_QUERYENDSESSION, WNDCLASSW,
+            KillTimer, MSG, PostQuitMessage, RegisterClassW, SetTimer, TranslateMessage, WM_CLOSE,
+            WM_DESTROY, WM_ENDSESSION, WM_QUERYENDSESSION, WNDCLASSW, WS_EX_TOOLWINDOW,
+            WS_OVERLAPPED,
         },
     },
     core::w,
@@ -18,15 +25,23 @@ use windows::{
 
 use crate::supervisor::SupervisorCommand;
 
-static SHUTDOWN_SENDER: OnceLock<Sender<SupervisorCommand>> = OnceLock::new();
+struct ShutdownBridge {
+    command_tx: Sender<SupervisorCommand>,
+    done_rx: Receiver<()>,
+    system_shutdown_requested: AtomicBool,
+}
+
+static SHUTDOWN_BRIDGE: OnceLock<ShutdownBridge> = OnceLock::new();
 
 pub struct NativeEventLoop {
     hwnd: HWND,
 }
 
 impl NativeEventLoop {
-    pub fn new(shutdown_sender: Sender<SupervisorCommand>) -> Result<Self> {
-        let _ = SHUTDOWN_SENDER.set(shutdown_sender);
+    pub fn new(command_tx: Sender<SupervisorCommand>, done_rx: Receiver<()>) -> Result<Self> {
+        if SHUTDOWN_BRIDGE.get().is_some() {
+            return Err(anyhow!("shutdown bridge was already installed"));
+        }
         let module = unsafe { GetModuleHandleW(None) }.context("get current module")?;
         let instance = HINSTANCE(module.0);
         let class = w!("VRChatX3DStartFixEventWindow");
@@ -42,28 +57,35 @@ impl NativeEventLoop {
         }
         let hwnd = unsafe {
             CreateWindowExW(
-                WINDOW_EX_STYLE::default(),
+                WS_EX_TOOLWINDOW,
                 class,
                 w!("VRChat X3D Start Fix"),
-                WINDOW_STYLE::default(),
+                WS_OVERLAPPED,
                 0,
                 0,
                 0,
                 0,
-                Some(HWND_MESSAGE),
+                None,
                 None,
                 Some(instance),
                 None,
             )
         }
         .context("create hidden event window")?;
-        let timer = unsafe { SetTimer(Some(hwnd), 1, 50, None) };
+        let timer = unsafe { SetTimer(Some(hwnd), 1, 100, None) };
         if timer == 0 {
             unsafe {
                 let _ = DestroyWindow(hwnd);
             }
             return Err(anyhow!("failed to start hidden event window timer"));
         }
+        SHUTDOWN_BRIDGE
+            .set(ShutdownBridge {
+                command_tx,
+                done_rx,
+                system_shutdown_requested: AtomicBool::new(false),
+            })
+            .map_err(|_| anyhow!("shutdown bridge was already installed"))?;
         Ok(Self { hwnd })
     }
 
@@ -82,6 +104,18 @@ impl NativeEventLoop {
             DispatchMessageW(&message);
         }
         Ok(true)
+    }
+
+    pub fn system_shutdown_requested(&self) -> bool {
+        SHUTDOWN_BRIDGE
+            .get()
+            .is_some_and(|bridge| bridge.system_shutdown_requested.load(Ordering::Acquire))
+    }
+
+    pub fn take_shutdown_completed(&self) -> bool {
+        SHUTDOWN_BRIDGE
+            .get()
+            .is_some_and(|bridge| bridge.done_rx.try_recv().is_ok())
     }
 }
 
@@ -102,21 +136,18 @@ unsafe extern "system" fn window_proc(
 ) -> LRESULT {
     match message {
         WM_QUERYENDSESSION => {
-            if let Some(sender) = SHUTDOWN_SENDER.get() {
-                let _ = sender.try_send(SupervisorCommand::Shutdown);
-            }
+            // Windows may still cancel shutdown. Acknowledge immediately and
+            // defer all cleanup until WM_ENDSESSION confirms it.
             LRESULT(1)
         }
         WM_ENDSESSION => {
             if wparam.0 != 0 {
-                if let Some(sender) = SHUTDOWN_SENDER.get() {
-                    let _ = sender.try_send(SupervisorCommand::Shutdown);
-                }
+                request_shutdown(true);
             }
             LRESULT(0)
         }
         WM_CLOSE => {
-            let _ = unsafe { DestroyWindow(hwnd) };
+            request_shutdown(false);
             LRESULT(0)
         }
         WM_DESTROY => {
@@ -124,5 +155,22 @@ unsafe extern "system" fn window_proc(
             LRESULT(0)
         }
         _ => unsafe { DefWindowProcW(hwnd, message, wparam, lparam) },
+    }
+}
+
+fn request_shutdown(wait_for_cleanup: bool) {
+    let Some(bridge) = SHUTDOWN_BRIDGE.get() else {
+        return;
+    };
+    bridge
+        .system_shutdown_requested
+        .store(true, Ordering::Release);
+    let _ = bridge
+        .command_tx
+        .send_timeout(SupervisorCommand::Shutdown, Duration::from_millis(100));
+    if wait_for_cleanup {
+        // Keep this bounded so the application never stalls system shutdown.
+        let _ = bridge.done_rx.recv_timeout(Duration::from_millis(1500));
+        crate::logging::flush();
     }
 }

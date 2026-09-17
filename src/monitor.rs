@@ -1,6 +1,9 @@
 use std::collections::HashSet;
 
-use sysinfo::{Pid, Process, ProcessStatus, ProcessesToUpdate, System};
+use sysinfo::{
+    CpuRefreshKind, Pid, Process, ProcessRefreshKind, ProcessStatus, ProcessesToUpdate,
+    RefreshKind, System, UpdateKind,
+};
 
 use crate::{
     heuristic::Observation,
@@ -38,14 +41,22 @@ pub struct ProcessMonitor {
 
 impl ProcessMonitor {
     pub fn new() -> Self {
+        let processes = process_refresh_kind(true);
         Self {
-            system: System::new_all(),
+            system: System::new_with_specifics(
+                RefreshKind::new()
+                    .with_cpu(CpuRefreshKind::everything())
+                    .with_processes(processes),
+            ),
         }
     }
 
-    pub fn refresh(&mut self) {
-        self.system.refresh_processes(ProcessesToUpdate::All);
-        self.system.refresh_cpu_usage();
+    pub fn refresh(&mut self, include_cpu: bool) {
+        self.system
+            .refresh_processes_specifics(ProcessesToUpdate::All, process_refresh_kind(include_cpu));
+        if include_cpu {
+            self.system.refresh_cpu_usage();
+        }
     }
 
     pub fn physical_core_count(&self) -> usize {
@@ -200,6 +211,13 @@ impl ProcessMonitor {
                     .any(|part| part.to_string_lossy().contains(&target))
         })
     }
+}
+
+fn process_refresh_kind(include_cpu: bool) -> ProcessRefreshKind {
+    let kind = ProcessRefreshKind::new()
+        .with_cmd(UpdateKind::OnlyIfNotSet)
+        .with_exe(UpdateKind::OnlyIfNotSet);
+    if include_cpu { kind.with_cpu() } else { kind }
 }
 
 fn candidate(

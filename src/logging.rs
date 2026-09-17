@@ -1,4 +1,8 @@
-use std::{fs, io, path::PathBuf};
+use std::{
+    fs, io,
+    path::PathBuf,
+    sync::{Mutex, OnceLock},
+};
 
 use directories::ProjectDirs;
 use file_rotate::{ContentLimit, FileRotate, compression::Compression, suffix::AppendCount};
@@ -8,9 +12,16 @@ use tracing_subscriber::util::SubscriberInitExt;
 
 pub const LOG_FILE_NAME: &str = "vrchat-x3d-start-fix.jsonl";
 
+static LOG_GUARD: OnceLock<Mutex<Option<WorkerGuard>>> = OnceLock::new();
+
 pub struct AppGuards {
-    _log_guard: WorkerGuard,
     pub log_dir: PathBuf,
+}
+
+impl Drop for AppGuards {
+    fn drop(&mut self) {
+        flush();
+    }
 }
 
 #[derive(Debug, Error)]
@@ -45,8 +56,20 @@ pub fn initialize() -> Result<AppGuards, LoggingError> {
         .finish()
         .try_init()
         .map_err(|error| LoggingError::Subscriber(error.to_string()))?;
-    Ok(AppGuards {
-        _log_guard: guard,
-        log_dir,
-    })
+    LOG_GUARD
+        .set(Mutex::new(Some(guard)))
+        .map_err(|_| LoggingError::Subscriber("logging guard was already installed".into()))?;
+    Ok(AppGuards { log_dir })
+}
+
+/// Flushes the non-blocking writer exactly once. This is safe to call from the
+/// bounded WM_ENDSESSION shutdown path as well as normal RAII teardown.
+pub fn flush() {
+    let Some(guard) = LOG_GUARD.get() else {
+        return;
+    };
+    let mut guard = guard
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    drop(guard.take());
 }

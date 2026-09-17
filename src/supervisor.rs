@@ -5,7 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crossbeam_channel::{Receiver, Sender, TryRecvError};
+use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
 use serde_json::json;
 
 use crate::{
@@ -81,10 +81,20 @@ pub fn spawn(
     log_dir: PathBuf,
     command_rx: Receiver<SupervisorCommand>,
     update_tx: Sender<UiUpdate>,
+    shutdown_done_tx: Sender<()>,
 ) -> thread::JoinHandle<()> {
     thread::Builder::new()
         .name("supervisor".into())
-        .spawn(move || run(config, store, log_dir, command_rx, update_tx))
+        .spawn(move || {
+            run(
+                config,
+                store,
+                log_dir,
+                command_rx,
+                update_tx,
+                shutdown_done_tx,
+            )
+        })
         .expect("create supervisor thread")
 }
 
@@ -94,9 +104,10 @@ fn run(
     log_dir: PathBuf,
     command_rx: Receiver<SupervisorCommand>,
     update_tx: Sender<UiUpdate>,
+    shutdown_done_tx: Sender<()>,
 ) {
     let mut monitor = ProcessMonitor::new();
-    monitor.refresh();
+    monitor.refresh(false);
     let physical_cores = monitor.physical_core_count();
     let logical_processors = monitor.logical_processor_count();
     tracing::info!(
@@ -110,7 +121,7 @@ fn run(
     );
 
     let mut status = UiStatus::Waiting;
-    send_update(&update_tx, &status, &config, false);
+    send_update(&update_tx, &status, &config);
     let mut ignored_pids = HashSet::new();
     let mut active: Option<ActiveAttempt> = None;
     let mut cooldown: Option<(Option<u32>, Instant)> = None;
@@ -121,64 +132,69 @@ fn run(
     let mut first_scan = true;
 
     'supervisor: loop {
-        loop {
-            match command_rx.try_recv() {
-                Ok(SupervisorCommand::Shutdown) => {
-                    status = UiStatus::ShuttingDown;
-                    send_update(&update_tx, &status, &config, true);
-                    if let Some(mut attempt) = active.take() {
-                        finish_attempt(
-                            &mut attempt,
-                            AttemptOutcome::UnknownTimeout,
-                            &mut ignored_pids,
-                        );
-                    }
-                    if let Err(error) = store.save(&config) {
-                        tracing::error!(event = "config_save_failed", error = %error);
-                    }
-                    tracing::info!(event = "app_shutdown", "supervisor stopped");
-                    let _ = update_tx.send(UiUpdate {
-                        status: UiStatus::ShutdownComplete,
-                        config: config.clone(),
-                    });
-                    break 'supervisor;
-                }
-                Ok(SupervisorCommand::OpenLogFolder) => {
-                    if let Err(error) = open::that(&log_dir) {
-                        tracing::error!(event = "open_log_folder_failed", error = %error, path = %log_dir.display());
-                    }
-                }
-                Ok(command) => {
-                    if apply_config_command(&mut config, command) {
-                        match store.save(&config) {
-                            Ok(()) => tracing::info!(
-                                event = "config_updated",
-                                profile = ?config.profile,
-                                params = %json!(config.resolved_params())
-                            ),
-                            Err(error) => {
-                                tracing::error!(event = "config_save_failed", error = %error)
-                            }
-                        }
-                        send_update(&update_tx, &status, &config, false);
-                    }
-                }
-                Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => break 'supervisor,
-            }
-        }
-
         let interval = if active.is_some() {
             ACTIVE_POLL
         } else {
             IDLE_POLL
         };
-        if last_poll.elapsed() < interval {
-            thread::sleep(Duration::from_millis(20));
-            continue;
+        let wait = interval.saturating_sub(last_poll.elapsed());
+        match command_rx.recv_timeout(wait) {
+            Ok(SupervisorCommand::Shutdown) => {
+                status = UiStatus::ShuttingDown;
+                send_update(&update_tx, &status, &config);
+                if let Some(mut attempt) = active.take() {
+                    finish_attempt(
+                        &mut attempt,
+                        AttemptOutcome::UnknownTimeout,
+                        &mut ignored_pids,
+                    );
+                }
+                if let Err(error) = store.save(&config) {
+                    tracing::error!(event = "config_save_failed", error = %error);
+                }
+                tracing::info!(event = "app_shutdown", "supervisor stopped");
+                send_update(&update_tx, &UiStatus::ShutdownComplete, &config);
+                let _ = shutdown_done_tx.try_send(());
+                break 'supervisor;
+            }
+            Ok(SupervisorCommand::OpenLogFolder) => {
+                if let Err(error) = open::that(&log_dir) {
+                    tracing::error!(event = "open_log_folder_failed", error = %error, path = %log_dir.display());
+                }
+                continue;
+            }
+            Ok(command) => {
+                if apply_config_command(&mut config, command) {
+                    match store.save(&config) {
+                        Ok(()) => tracing::info!(
+                            event = "config_updated",
+                            profile = ?config.profile,
+                            params = %json!(config.resolved_params())
+                        ),
+                        Err(error) => {
+                            tracing::error!(event = "config_save_failed", error = %error)
+                        }
+                    }
+                    send_update(&update_tx, &status, &config);
+                }
+                continue;
+            }
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => {
+                if let Some(mut attempt) = active.take() {
+                    finish_attempt(
+                        &mut attempt,
+                        AttemptOutcome::InternalError,
+                        &mut ignored_pids,
+                    );
+                }
+                tracing::warn!(event = "command_channel_disconnected");
+                let _ = shutdown_done_tx.try_send(());
+                break 'supervisor;
+            }
         }
         last_poll = Instant::now();
-        monitor.refresh();
+        monitor.refresh(active.is_some());
         ignored_pids.retain(|pid| monitor.pid_exists(*pid));
 
         if let Some((pid, since)) = cooldown {
@@ -187,7 +203,7 @@ fn run(
             if complete {
                 cooldown = None;
                 status = UiStatus::Waiting;
-                send_update(&update_tx, &status, &config, false);
+                send_update(&update_tx, &status, &config);
             } else {
                 continue;
             }
@@ -238,7 +254,7 @@ fn run(
                     AttemptOutcome::UnknownTimeout => UiStatus::Unknown,
                     _ => UiStatus::Failed,
                 };
-                send_update(&update_tx, &status, &config, false);
+                send_update(&update_tx, &status, &config);
                 cooldown = Some((pid, Instant::now()));
             }
             continue;
@@ -262,7 +278,7 @@ fn run(
             }
             first_scan = false;
             status = UiStatus::Detected;
-            send_update(&update_tx, &status, &config, false);
+            send_update(&update_tx, &status, &config);
             ignored_pids.insert(candidate.trigger.source_pid);
             match start_attempt(
                 next_attempt_id,
@@ -273,13 +289,13 @@ fn run(
                 Ok(attempt) => {
                     next_attempt_id += 1;
                     status = UiStatus::Disturbing;
-                    send_update(&update_tx, &status, &config, false);
+                    send_update(&update_tx, &status, &config);
                     active = Some(attempt);
                 }
                 Err(error) => {
                     tracing::error!(event = "attempt_start_failed", error = %error);
                     status = UiStatus::Failed;
-                    send_update(&update_tx, &status, &config, false);
+                    send_update(&update_tx, &status, &config);
                     cooldown = Some((None, Instant::now()));
                 }
             }
@@ -400,14 +416,10 @@ fn apply_config_command(config: &mut AppConfig, command: SupervisorCommand) -> b
     true
 }
 
-fn send_update(tx: &Sender<UiUpdate>, status: &UiStatus, config: &AppConfig, reliable: bool) {
+fn send_update(tx: &Sender<UiUpdate>, status: &UiStatus, config: &AppConfig) {
     let update = UiUpdate {
         status: status.clone(),
         config: config.clone(),
     };
-    if reliable {
-        let _ = tx.send(update);
-    } else {
-        let _ = tx.try_send(update);
-    }
+    let _ = tx.try_send(update);
 }
