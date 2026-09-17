@@ -6,19 +6,27 @@ use tray_icon::{
 };
 
 use crate::{
-    config::{AppConfig, CpuCoverage, DisturbanceParams, Profile},
+    config::{AppConfig, CpuCoverage, DisturbanceParams, Language, Profile},
     supervisor::{SupervisorCommand, UiStatus, UiUpdate},
 };
 
 pub struct TrayUi {
     tray: TrayIcon,
+    header: MenuItem,
     status_item: MenuItem,
     config_item: MenuItem,
+    profile_menu: Submenu,
     profile_items: Vec<(Profile, CheckMenuItem)>,
+    advanced_menu: Submenu,
+    duty_menu: Submenu,
     duty_items: Vec<(u8, CheckMenuItem)>,
+    duration_menu: Submenu,
     duration_items: Vec<(u64, CheckMenuItem)>,
+    coverage_menu: Submenu,
     coverage_items: Vec<(CpuCoverage, CheckMenuItem)>,
     reset_item: MenuItem,
+    language_menu: Submenu,
+    language_items: Vec<(Language, CheckMenuItem)>,
     open_logs_item: MenuItem,
     exit_item: MenuItem,
     command_tx: Sender<SupervisorCommand>,
@@ -85,6 +93,18 @@ impl TrayUi {
         menu.append(&advanced)?;
 
         menu.append(&PredefinedMenuItem::separator())?;
+        let language_menu = Submenu::new(rust_i18n::t!("menu.language"), true);
+        let language_items = Language::ALL
+            .into_iter()
+            .map(|language| {
+                let item = CheckMenuItem::new(language_label(language), true, false, None);
+                language_menu.append(&item)?;
+                Ok((language, item))
+            })
+            .collect::<Result<Vec<_>, tray_icon::menu::Error>>()?;
+        menu.append(&language_menu)?;
+        menu.append(&PredefinedMenuItem::separator())?;
+
         let open_logs_item = MenuItem::new(rust_i18n::t!("menu.open_logs"), true, None);
         menu.append(&open_logs_item)?;
         menu.append(&PredefinedMenuItem::separator())?;
@@ -106,13 +126,21 @@ impl TrayUi {
 
         let ui = Self {
             tray,
+            header,
             status_item,
             config_item,
+            profile_menu,
             profile_items,
+            advanced_menu: advanced,
+            duty_menu,
             duty_items,
+            duration_menu,
             duration_items,
+            coverage_menu,
             coverage_items,
             reset_item,
+            language_menu,
+            language_items,
             open_logs_item,
             exit_item,
             command_tx,
@@ -132,6 +160,14 @@ impl TrayUi {
                 let _ = self.command_tx.try_send(SupervisorCommand::OpenLogFolder);
             } else if event.id() == self.reset_item.id() {
                 let _ = self.command_tx.try_send(SupervisorCommand::ResetDefaults);
+            } else if let Some((language, _)) = self
+                .language_items
+                .iter()
+                .find(|(_, item)| event.id() == item.id())
+            {
+                let _ = self
+                    .command_tx
+                    .try_send(SupervisorCommand::SetLanguage(*language));
             } else if let Some((profile, _)) = self
                 .profile_items
                 .iter()
@@ -167,6 +203,18 @@ impl TrayUi {
     }
 
     pub fn apply_update(&self, update: &UiUpdate) {
+        self.header.set_text(rust_i18n::t!("app.name"));
+        self.profile_menu.set_text(rust_i18n::t!("menu.profile"));
+        self.advanced_menu.set_text(rust_i18n::t!("menu.advanced"));
+        self.duty_menu.set_text(rust_i18n::t!("menu.duty"));
+        self.duration_menu.set_text(rust_i18n::t!("menu.duration"));
+        self.coverage_menu.set_text(rust_i18n::t!("menu.coverage"));
+        self.reset_item.set_text(rust_i18n::t!("menu.reset"));
+        self.language_menu.set_text(rust_i18n::t!("menu.language"));
+        self.open_logs_item
+            .set_text(rust_i18n::t!("menu.open_logs"));
+        self.exit_item.set_text(rust_i18n::t!("menu.exit"));
+
         let status_text = rust_i18n::t!(update.status.locale_key()).to_string();
         self.status_item.set_text(format!(
             "{}: {status_text}",
@@ -185,6 +233,7 @@ impl TrayUi {
             rust_i18n::t!("app.name")
         )));
         for (profile, item) in &self.profile_items {
+            item.set_text(rust_i18n::t!(profile.locale_key()));
             item.set_checked(update.config.profile == *profile);
         }
         for (duty, item) in &self.duty_items {
@@ -194,7 +243,19 @@ impl TrayUi {
             item.set_checked(params.hard_stop_secs == *duration);
         }
         for (coverage, item) in &self.coverage_items {
+            item.set_text(rust_i18n::t!(coverage.locale_key()));
             item.set_checked(params.coverage == *coverage);
         }
+        let effective_language = crate::i18n::language_for_locale(&rust_i18n::locale());
+        for (language, item) in &self.language_items {
+            item.set_checked(effective_language == *language);
+        }
+    }
+}
+
+fn language_label(language: Language) -> &'static str {
+    match language {
+        Language::ZhCn => "中文",
+        Language::En => "English",
     }
 }

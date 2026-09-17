@@ -11,6 +11,7 @@ menu:
   duration: "Max duration"
   coverage: "CPU coverage"
   reset: "Reset defaults"
+  language: "Language"
   open_logs: "Open log folder"
   exit: "Exit"
 profile:
@@ -31,4 +32,3 @@ status:
   failed: "Startup failed"
   unknown: "Unable to confirm startup"
   shutting_down: "Shutting down…"
-

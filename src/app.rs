@@ -61,6 +61,7 @@ pub fn run() -> Result<()> {
             match update_rx.try_recv() {
                 Ok(update) => {
                     shutdown_complete = update.status == UiStatus::ShutdownComplete;
+                    crate::i18n::initialize(update.config.language_override);
                     tray.apply_update(&update);
                 }
                 Err(TryRecvError::Empty) => break,

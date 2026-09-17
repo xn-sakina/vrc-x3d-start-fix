@@ -11,12 +11,18 @@ pub fn normalize_locale(locale: Option<&str>) -> &'static str {
 
 pub fn initialize(override_language: Option<Language>) -> &'static str {
     let locale = match override_language {
-        Some(Language::ZhCn) => "zh-CN",
-        Some(Language::En) => "en",
+        Some(language) => language.locale(),
         None => normalize_locale(sys_locale::get_locale().as_deref()),
     };
     rust_i18n::set_locale(locale);
     locale
+}
+
+pub fn language_for_locale(locale: &str) -> Language {
+    match normalize_locale(Some(locale)) {
+        "zh-CN" => Language::ZhCn,
+        _ => Language::En,
+    }
 }
 
 #[cfg(test)]
@@ -35,5 +41,11 @@ mod tests {
         assert_eq!(normalize_locale(Some("en-US")), "en");
         assert_eq!(normalize_locale(Some("ja-JP")), "en");
         assert_eq!(normalize_locale(None), "en");
+    }
+
+    #[test]
+    fn effective_language_matches_normalized_locale() {
+        assert_eq!(language_for_locale("zh-Hans"), Language::ZhCn);
+        assert_eq!(language_for_locale("en-US"), Language::En);
     }
 }

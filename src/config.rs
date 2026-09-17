@@ -140,6 +140,17 @@ pub enum Language {
     ZhCn,
 }
 
+impl Language {
+    pub const ALL: [Self; 2] = [Self::ZhCn, Self::En];
+
+    pub fn locale(self) -> &'static str {
+        match self {
+            Self::En => "en",
+            Self::ZhCn => "zh-CN",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AppConfig {
     pub schema_version: u32,
@@ -214,6 +225,10 @@ impl AppConfig {
 
     pub fn set_coverage(&mut self, coverage: CpuCoverage) {
         self.edit_custom(|params| params.coverage = coverage);
+    }
+
+    pub fn set_language(&mut self, language: Language) {
+        self.language_override = Some(language);
     }
 
     pub fn reset(&mut self) {
@@ -409,6 +424,7 @@ mod tests {
         let store = ConfigStore::at(temp.path().join("config.toml"));
         let mut config = AppConfig::default();
         config.select_profile(Profile::Maximum);
+        config.set_language(Language::ZhCn);
         store.save(&config).unwrap();
         assert_eq!(store.load_or_recover().unwrap().config, config);
     }

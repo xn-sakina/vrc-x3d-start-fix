@@ -11,6 +11,7 @@ menu:
   duration: "最长时间"
   coverage: "CPU 覆盖"
   reset: "恢复默认值"
+  language: "语言"
   open_logs: "打开日志目录"
   exit: "退出"
 profile:
@@ -31,4 +32,3 @@ status:
   failed: "启动失败"
   unknown: "无法确认启动结果"
   shutting_down: "正在退出…"
-

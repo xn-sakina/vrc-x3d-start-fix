@@ -9,7 +9,7 @@ use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
 use serde_json::json;
 
 use crate::{
-    config::{AppConfig, ConfigStore, CpuCoverage, Profile},
+    config::{AppConfig, ConfigStore, CpuCoverage, Language, Profile},
     disturbance::DisturbanceSession,
     heuristic::{AttemptOutcome, AttemptTracker},
     lifecycle::TriggerInfo,
@@ -26,6 +26,7 @@ pub enum SupervisorCommand {
     SetDuty(u8),
     SetDuration(u64),
     SetCoverage(CpuCoverage),
+    SetLanguage(Language),
     ResetDefaults,
     OpenLogFolder,
     Shutdown,
@@ -410,6 +411,7 @@ fn apply_config_command(config: &mut AppConfig, command: SupervisorCommand) -> b
         SupervisorCommand::SetDuty(duty) => config.set_duty(duty),
         SupervisorCommand::SetDuration(duration) => config.set_hard_stop(duration),
         SupervisorCommand::SetCoverage(coverage) => config.set_coverage(coverage),
+        SupervisorCommand::SetLanguage(language) => config.set_language(language),
         SupervisorCommand::ResetDefaults => config.reset(),
         SupervisorCommand::OpenLogFolder | SupervisorCommand::Shutdown => return false,
     }
