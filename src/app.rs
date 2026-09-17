@@ -1,4 +1,4 @@
-use std::{panic, thread::JoinHandle, time::Duration};
+use std::{cell::Cell, panic, rc::Rc, thread::JoinHandle, time::Duration};
 
 use anyhow::{Context, Result};
 use crossbeam_channel::{TryRecvError, bounded};
@@ -54,28 +54,38 @@ pub fn run() -> Result<()> {
     let event_loop = NativeEventLoop::new(command_tx.clone(), shutdown_done_rx)?;
     let tray = TrayUi::new(&loaded.config, command_tx.clone())?;
 
-    let mut shutdown_complete = false;
-    while !shutdown_complete && event_loop.next_message()? {
+    let shutdown_complete = Rc::new(Cell::new(false));
+    let ui_shutdown_complete = Rc::clone(&shutdown_complete);
+    event_loop.set_tick_handler(move || {
+        let mut ui_changed = false;
         tray.poll_menu_events();
         loop {
             match update_rx.try_recv() {
                 Ok(update) => {
-                    shutdown_complete = update.status == UiStatus::ShutdownComplete;
+                    ui_shutdown_complete.set(update.status == UiStatus::ShutdownComplete);
                     crate::i18n::initialize(update.config.language_override);
                     tray.apply_update(&update);
+                    ui_changed = true;
                 }
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => {
-                    shutdown_complete = true;
+                    ui_shutdown_complete.set(true);
                     break;
                 }
             }
         }
-        shutdown_complete |= event_loop.system_shutdown_requested();
-        shutdown_complete |= event_loop.take_shutdown_completed();
+        ui_changed
+    })?;
+
+    while !shutdown_complete.get() && event_loop.next_message()? {
+        shutdown_complete.set(
+            shutdown_complete.get()
+                || event_loop.system_shutdown_requested()
+                || event_loop.take_shutdown_completed(),
+        );
     }
 
-    drop(tray);
+    drop(event_loop);
     supervisor.shutdown_and_join()?;
     drop(guards);
     Ok(())

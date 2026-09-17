@@ -12,6 +12,7 @@ use crate::{
 
 pub struct TrayUi {
     tray: TrayIcon,
+    status_icons: StatusIcons,
     header: MenuItem,
     status_item: MenuItem,
     config_item: MenuItem,
@@ -32,8 +33,66 @@ pub struct TrayUi {
     command_tx: Sender<SupervisorCommand>,
 }
 
+struct StatusIcons {
+    waiting: Icon,
+    detected: Icon,
+    disturbing: Icon,
+    success: Icon,
+    failed: Icon,
+    unknown: Icon,
+    shutting_down: Icon,
+}
+
+impl StatusIcons {
+    fn load() -> Result<Self> {
+        Ok(Self {
+            waiting: load_icon(
+                include_bytes!("../assets/tray-icons/waiting-32.png"),
+                "waiting",
+            )?,
+            detected: load_icon(
+                include_bytes!("../assets/tray-icons/detected-32.png"),
+                "detected",
+            )?,
+            disturbing: load_icon(
+                include_bytes!("../assets/tray-icons/disturbing-32.png"),
+                "disturbing",
+            )?,
+            success: load_icon(
+                include_bytes!("../assets/tray-icons/success-32.png"),
+                "success",
+            )?,
+            failed: load_icon(
+                include_bytes!("../assets/tray-icons/failed-32.png"),
+                "failed",
+            )?,
+            unknown: load_icon(
+                include_bytes!("../assets/tray-icons/unknown-32.png"),
+                "unknown",
+            )?,
+            shutting_down: load_icon(
+                include_bytes!("../assets/tray-icons/shutting-down-32.png"),
+                "shutting down",
+            )?,
+        })
+    }
+
+    fn for_status(&self, status: &UiStatus) -> &Icon {
+        match status {
+            UiStatus::Waiting => &self.waiting,
+            UiStatus::Detected => &self.detected,
+            UiStatus::Disturbing => &self.disturbing,
+            UiStatus::Success => &self.success,
+            UiStatus::Failed => &self.failed,
+            UiStatus::Unknown => &self.unknown,
+            UiStatus::ShuttingDown | UiStatus::ShutdownComplete => &self.shutting_down,
+        }
+    }
+}
+
 impl TrayUi {
     pub fn new(config: &AppConfig, command_tx: Sender<SupervisorCommand>) -> Result<Self> {
+        let status_icons = StatusIcons::load()?;
         let menu = Menu::new();
         let header = MenuItem::new(rust_i18n::t!("app.name"), false, None);
         let status_item = MenuItem::new("", false, None);
@@ -111,21 +170,17 @@ impl TrayUi {
         let exit_item = MenuItem::new(rust_i18n::t!("menu.exit"), true, None);
         menu.append(&exit_item)?;
 
-        let image = image::load_from_memory(include_bytes!("../assets/tray-icon-32.png"))
-            .context("decode embedded tray icon")?
-            .into_rgba8();
-        let (width, height) = image.dimensions();
-        let icon = Icon::from_rgba(image.into_raw(), width, height).context("create tray icon")?;
         let tray = TrayIconBuilder::new()
             .with_menu(Box::new(menu))
             .with_menu_on_left_click(false)
             .with_tooltip(rust_i18n::t!("app.name"))
-            .with_icon(icon)
+            .with_icon(status_icons.for_status(&UiStatus::Waiting).clone())
             .build()
             .context("create Windows tray icon")?;
 
         let ui = Self {
             tray,
+            status_icons,
             header,
             status_item,
             config_item,
@@ -203,6 +258,12 @@ impl TrayUi {
     }
 
     pub fn apply_update(&self, update: &UiUpdate) {
+        if let Err(error) = self
+            .tray
+            .set_icon(Some(self.status_icons.for_status(&update.status).clone()))
+        {
+            tracing::warn!(event = "tray_icon_update_failed", error = %error);
+        }
         self.header.set_text(rust_i18n::t!("app.name"));
         self.profile_menu.set_text(rust_i18n::t!("menu.profile"));
         self.advanced_menu.set_text(rust_i18n::t!("menu.advanced"));
@@ -251,6 +312,15 @@ impl TrayUi {
             item.set_checked(effective_language == *language);
         }
     }
+}
+
+fn load_icon(bytes: &[u8], label: &str) -> Result<Icon> {
+    let image = image::load_from_memory(bytes)
+        .with_context(|| format!("decode embedded {label} tray icon"))?
+        .into_rgba8();
+    let (width, height) = image.dimensions();
+    Icon::from_rgba(image.into_raw(), width, height)
+        .with_context(|| format!("create {label} tray icon"))
 }
 
 fn language_label(language: Language) -> &'static str {
