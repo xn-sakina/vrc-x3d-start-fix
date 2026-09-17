@@ -1,0 +1,200 @@
+use anyhow::{Context, Result};
+use crossbeam_channel::Sender;
+use tray_icon::{
+    Icon, TrayIcon, TrayIconBuilder,
+    menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu},
+};
+
+use crate::{
+    config::{AppConfig, CpuCoverage, DisturbanceParams, Profile},
+    supervisor::{SupervisorCommand, UiStatus, UiUpdate},
+};
+
+pub struct TrayUi {
+    tray: TrayIcon,
+    status_item: MenuItem,
+    config_item: MenuItem,
+    profile_items: Vec<(Profile, CheckMenuItem)>,
+    duty_items: Vec<(u8, CheckMenuItem)>,
+    duration_items: Vec<(u64, CheckMenuItem)>,
+    coverage_items: Vec<(CpuCoverage, CheckMenuItem)>,
+    reset_item: MenuItem,
+    open_logs_item: MenuItem,
+    exit_item: MenuItem,
+    command_tx: Sender<SupervisorCommand>,
+}
+
+impl TrayUi {
+    pub fn new(config: &AppConfig, command_tx: Sender<SupervisorCommand>) -> Result<Self> {
+        let menu = Menu::new();
+        let header = MenuItem::new(rust_i18n::t!("app.name"), false, None);
+        let status_item = MenuItem::new("", false, None);
+        let config_item = MenuItem::new("", false, None);
+        menu.append_items(&[&header, &status_item, &config_item])?;
+        menu.append(&PredefinedMenuItem::separator())?;
+
+        let profile_menu = Submenu::new(rust_i18n::t!("menu.profile"), true);
+        let profile_items = Profile::PRESETS
+            .into_iter()
+            .map(|profile| {
+                let item =
+                    CheckMenuItem::new(rust_i18n::t!(profile.locale_key()), true, false, None);
+                profile_menu.append(&item)?;
+                Ok((profile, item))
+            })
+            .collect::<Result<Vec<_>, tray_icon::menu::Error>>()?;
+        menu.append(&profile_menu)?;
+
+        let advanced = Submenu::new(rust_i18n::t!("menu.advanced"), true);
+        let duty_menu = Submenu::new(rust_i18n::t!("menu.duty"), true);
+        let duty_items = DisturbanceParams::DUTY_OPTIONS
+            .into_iter()
+            .map(|value| {
+                let item = CheckMenuItem::new(format!("{value}%"), true, false, None);
+                duty_menu.append(&item)?;
+                Ok((value, item))
+            })
+            .collect::<Result<Vec<_>, tray_icon::menu::Error>>()?;
+        advanced.append(&duty_menu)?;
+
+        let duration_menu = Submenu::new(rust_i18n::t!("menu.duration"), true);
+        let duration_items = DisturbanceParams::DURATION_OPTIONS
+            .into_iter()
+            .map(|value| {
+                let item = CheckMenuItem::new(format!("{value} s"), true, false, None);
+                duration_menu.append(&item)?;
+                Ok((value, item))
+            })
+            .collect::<Result<Vec<_>, tray_icon::menu::Error>>()?;
+        advanced.append(&duration_menu)?;
+
+        let coverage_menu = Submenu::new(rust_i18n::t!("menu.coverage"), true);
+        let coverage_items = CpuCoverage::ALL
+            .into_iter()
+            .map(|coverage| {
+                let item =
+                    CheckMenuItem::new(rust_i18n::t!(coverage.locale_key()), true, false, None);
+                coverage_menu.append(&item)?;
+                Ok((coverage, item))
+            })
+            .collect::<Result<Vec<_>, tray_icon::menu::Error>>()?;
+        advanced.append(&coverage_menu)?;
+        advanced.append(&PredefinedMenuItem::separator())?;
+        let reset_item = MenuItem::new(rust_i18n::t!("menu.reset"), true, None);
+        advanced.append(&reset_item)?;
+        menu.append(&advanced)?;
+
+        menu.append(&PredefinedMenuItem::separator())?;
+        let open_logs_item = MenuItem::new(rust_i18n::t!("menu.open_logs"), true, None);
+        menu.append(&open_logs_item)?;
+        menu.append(&PredefinedMenuItem::separator())?;
+        let exit_item = MenuItem::new(rust_i18n::t!("menu.exit"), true, None);
+        menu.append(&exit_item)?;
+
+        let image = image::load_from_memory(include_bytes!("../assets/tray-icon-32.png"))
+            .context("decode embedded tray icon")?
+            .into_rgba8();
+        let (width, height) = image.dimensions();
+        let icon = Icon::from_rgba(image.into_raw(), width, height).context("create tray icon")?;
+        let tray = TrayIconBuilder::new()
+            .with_menu(Box::new(menu))
+            .with_menu_on_left_click(false)
+            .with_tooltip(rust_i18n::t!("app.name"))
+            .with_icon(icon)
+            .build()
+            .context("create Windows tray icon")?;
+
+        let ui = Self {
+            tray,
+            status_item,
+            config_item,
+            profile_items,
+            duty_items,
+            duration_items,
+            coverage_items,
+            reset_item,
+            open_logs_item,
+            exit_item,
+            command_tx,
+        };
+        ui.apply_update(&UiUpdate {
+            status: UiStatus::Waiting,
+            config: config.clone(),
+        });
+        Ok(ui)
+    }
+
+    pub fn poll_menu_events(&self) {
+        while let Ok(event) = MenuEvent::receiver().try_recv() {
+            if event.id() == self.exit_item.id() {
+                let _ = self.command_tx.send(SupervisorCommand::Shutdown);
+            } else if event.id() == self.open_logs_item.id() {
+                let _ = self.command_tx.try_send(SupervisorCommand::OpenLogFolder);
+            } else if event.id() == self.reset_item.id() {
+                let _ = self.command_tx.try_send(SupervisorCommand::ResetDefaults);
+            } else if let Some((profile, _)) = self
+                .profile_items
+                .iter()
+                .find(|(_, item)| event.id() == item.id())
+            {
+                let _ = self
+                    .command_tx
+                    .try_send(SupervisorCommand::SelectProfile(*profile));
+            } else if let Some((duty, _)) = self
+                .duty_items
+                .iter()
+                .find(|(_, item)| event.id() == item.id())
+            {
+                let _ = self.command_tx.try_send(SupervisorCommand::SetDuty(*duty));
+            } else if let Some((duration, _)) = self
+                .duration_items
+                .iter()
+                .find(|(_, item)| event.id() == item.id())
+            {
+                let _ = self
+                    .command_tx
+                    .try_send(SupervisorCommand::SetDuration(*duration));
+            } else if let Some((coverage, _)) = self
+                .coverage_items
+                .iter()
+                .find(|(_, item)| event.id() == item.id())
+            {
+                let _ = self
+                    .command_tx
+                    .try_send(SupervisorCommand::SetCoverage(*coverage));
+            }
+        }
+    }
+
+    pub fn apply_update(&self, update: &UiUpdate) {
+        let status_text = rust_i18n::t!(update.status.locale_key()).to_string();
+        self.status_item.set_text(format!(
+            "{}: {status_text}",
+            rust_i18n::t!("menu.status_label")
+        ));
+        let params = update.config.resolved_params();
+        let profile = rust_i18n::t!(update.config.profile.locale_key());
+        self.config_item.set_text(format!(
+            "{}: {profile} {}% / {} s",
+            rust_i18n::t!("menu.config_label"),
+            params.duty_percent,
+            params.hard_stop_secs
+        ));
+        let _ = self.tray.set_tooltip(Some(format!(
+            "{} — {status_text}",
+            rust_i18n::t!("app.name")
+        )));
+        for (profile, item) in &self.profile_items {
+            item.set_checked(update.config.profile == *profile);
+        }
+        for (duty, item) in &self.duty_items {
+            item.set_checked(params.duty_percent == *duty);
+        }
+        for (duration, item) in &self.duration_items {
+            item.set_checked(params.hard_stop_secs == *duration);
+        }
+        for (coverage, item) in &self.coverage_items {
+            item.set_checked(params.coverage == *coverage);
+        }
+    }
+}

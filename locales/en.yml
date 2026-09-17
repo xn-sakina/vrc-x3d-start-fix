@@ -1,0 +1,34 @@
+app:
+  name: "VRChat X3D Start Fix"
+  second_instance: "VRChat X3D Start Fix is already running."
+  fatal_startup: "VRChat X3D Start Fix could not start. See the log if available."
+menu:
+  status_label: "Status"
+  config_label: "Current configuration"
+  profile: "Disturbance profile"
+  advanced: "Advanced"
+  duty: "Duty cycle"
+  duration: "Max duration"
+  coverage: "CPU coverage"
+  reset: "Reset defaults"
+  open_logs: "Open log folder"
+  exit: "Exit"
+profile:
+  gentle: "Gentle"
+  balanced: "Balanced"
+  robust: "Robust"
+  maximum: "Maximum"
+  custom: "Custom"
+coverage:
+  all_logical: "All logical processors"
+  physical_cores: "One worker per physical core"
+  unpinned: "No affinity"
+status:
+  waiting: "Waiting for VRChat…"
+  detected: "VRChat launch detected…"
+  disturbing: "Disturbing CPU scheduling…"
+  success: "Startup appears successful"
+  failed: "Startup failed"
+  unknown: "Unable to confirm startup"
+  shutting_down: "Shutting down…"
+

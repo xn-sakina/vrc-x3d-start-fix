@@ -1,0 +1,51 @@
+#include <windows.h>
+
+#define IDI_APP_ICON 101
+IDI_APP_ICON ICON "@ICON_PATH@"
+
+1 RT_MANIFEST
+BEGIN
+  "<?xml version='1.0' encoding='UTF-8' standalone='yes'?>"
+  "<assembly xmlns='urn:schemas-microsoft-com:asm.v1' manifestVersion='1.0'>"
+  "<assemblyIdentity version='1.0.0.0' processorArchitecture='amd64' name='local.VRChatX3DStartFix' type='win32'/>"
+  "<description>VRChat X3D Start Fix</description>"
+  "<trustInfo xmlns='urn:schemas-microsoft-com:asm.v3'><security><requestedPrivileges>"
+  "<requestedExecutionLevel level='asInvoker' uiAccess='false'/>"
+  "</requestedPrivileges></security></trustInfo>"
+  "<compatibility xmlns='urn:schemas-microsoft-com:compatibility.v1'><application>"
+  "<supportedOS Id='{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}'/>"
+  "</application></compatibility>"
+  "</assembly>"
+END
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION @VERSION_COMMAS@
+ PRODUCTVERSION @VERSION_COMMAS@
+ FILEFLAGSMASK 0x3fL
+#ifdef _DEBUG
+ FILEFLAGS 0x1L
+#else
+ FILEFLAGS 0x0L
+#endif
+ FILEOS 0x40004L
+ FILETYPE 0x1L
+ FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "CompanyName", "Local\0"
+            VALUE "FileDescription", "VRChat X3D Start Fix\0"
+            VALUE "FileVersion", "@VERSION_DOTS@\0"
+            VALUE "InternalName", "vrchat-x3d-start-fix\0"
+            VALUE "OriginalFilename", "vrchat-x3d-start-fix.exe\0"
+            VALUE "ProductName", "VRChat X3D Start Fix\0"
+            VALUE "ProductVersion", "@VERSION_DOTS@\0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 1200
+    END
+END

@@ -1,0 +1,34 @@
+app:
+  name: "VRChat X3D 启动修复"
+  second_instance: "VRChat X3D 启动修复已在运行。"
+  fatal_startup: "VRChat X3D 启动修复无法启动；如有日志，请查看日志。"
+menu:
+  status_label: "状态"
+  config_label: "当前配置"
+  profile: "扰动预设"
+  advanced: "高级参数"
+  duty: "占空比"
+  duration: "最长时间"
+  coverage: "CPU 覆盖"
+  reset: "恢复默认值"
+  open_logs: "打开日志目录"
+  exit: "退出"
+profile:
+  gentle: "轻量"
+  balanced: "平衡"
+  robust: "稳健"
+  maximum: "最大扰动"
+  custom: "自定义"
+coverage:
+  all_logical: "全部逻辑处理器"
+  physical_cores: "每个物理核心一个 worker"
+  unpinned: "不设 affinity"
+status:
+  waiting: "等待 VRChat…"
+  detected: "已检测到 VRChat 启动…"
+  disturbing: "正在扰动 CPU 调度…"
+  success: "启动似乎成功"
+  failed: "启动失败"
+  unknown: "无法确认启动结果"
+  shutting_down: "正在退出…"
+
