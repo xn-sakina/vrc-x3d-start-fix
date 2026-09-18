@@ -34,58 +34,32 @@ pub struct TrayUi {
 }
 
 struct StatusIcons {
-    waiting: Icon,
-    detected: Icon,
-    disturbing: Icon,
-    success: Icon,
-    failed: Icon,
-    unknown: Icon,
-    shutting_down: Icon,
+    ready: Icon,
+    working: Icon,
+    attention: Icon,
 }
 
 impl StatusIcons {
     fn load() -> Result<Self> {
         Ok(Self {
-            waiting: load_icon(
-                include_bytes!("../assets/tray-icons/waiting-32.png"),
-                "waiting",
+            ready: load_icon(include_bytes!("../assets/tray-icons/ready-32.png"), "ready")?,
+            working: load_icon(
+                include_bytes!("../assets/tray-icons/working-32.png"),
+                "working",
             )?,
-            detected: load_icon(
-                include_bytes!("../assets/tray-icons/detected-32.png"),
-                "detected",
-            )?,
-            disturbing: load_icon(
-                include_bytes!("../assets/tray-icons/disturbing-32.png"),
-                "disturbing",
-            )?,
-            success: load_icon(
-                include_bytes!("../assets/tray-icons/success-32.png"),
-                "success",
-            )?,
-            failed: load_icon(
-                include_bytes!("../assets/tray-icons/failed-32.png"),
-                "failed",
-            )?,
-            unknown: load_icon(
-                include_bytes!("../assets/tray-icons/unknown-32.png"),
-                "unknown",
-            )?,
-            shutting_down: load_icon(
-                include_bytes!("../assets/tray-icons/shutting-down-32.png"),
-                "shutting down",
+            attention: load_icon(
+                include_bytes!("../assets/tray-icons/attention-32.png"),
+                "attention",
             )?,
         })
     }
 
     fn for_status(&self, status: &UiStatus) -> &Icon {
         match status {
-            UiStatus::Waiting => &self.waiting,
-            UiStatus::Detected => &self.detected,
-            UiStatus::Disturbing => &self.disturbing,
-            UiStatus::Success => &self.success,
-            UiStatus::Failed => &self.failed,
-            UiStatus::Unknown => &self.unknown,
-            UiStatus::ShuttingDown | UiStatus::ShutdownComplete => &self.shutting_down,
+            UiStatus::Waiting | UiStatus::Success => &self.ready,
+            UiStatus::Detected | UiStatus::Disturbing => &self.working,
+            UiStatus::Failed | UiStatus::Unknown => &self.attention,
+            UiStatus::ShuttingDown | UiStatus::ShutdownComplete => &self.ready,
         }
     }
 }
