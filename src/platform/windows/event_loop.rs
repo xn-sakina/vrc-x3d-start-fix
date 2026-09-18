@@ -16,10 +16,11 @@ use windows::{
         Graphics::Gdi::{RDW_ALLCHILDREN, RDW_INVALIDATE, RDW_UPDATENOW, RedrawWindow},
         System::{LibraryLoader::GetModuleHandleW, Threading::GetCurrentThreadId},
         UI::WindowsAndMessaging::{
-            CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, EnumThreadWindows,
-            GetClassNameW, GetMessageW, KillTimer, MSG, PostQuitMessage, RegisterClassW, SetTimer,
-            TranslateMessage, WM_CLOSE, WM_DESTROY, WM_ENDSESSION, WM_QUERYENDSESSION, WM_TIMER,
-            WNDCLASSW, WS_EX_TOOLWINDOW, WS_OVERLAPPED,
+            ChangeWindowMessageFilterEx, CreateWindowExW, DefWindowProcW, DestroyWindow,
+            DispatchMessageW, EnumThreadWindows, GetClassNameW, GetMessageW, KillTimer, MSG,
+            MSGFLT_ALLOW, PostQuitMessage, RegisterClassW, SetTimer, TranslateMessage, WM_CLOSE,
+            WM_DESTROY, WM_ENDSESSION, WM_QUERYENDSESSION, WM_TIMER, WNDCLASSW, WS_EX_TOOLWINDOW,
+            WS_OVERLAPPED,
         },
     },
     core::{BOOL, w},
@@ -79,6 +80,17 @@ impl NativeEventLoop {
             )
         }
         .context("create hidden event window")?;
+        // A newer non-elevated instance must be able to ask an older elevated
+        // instance to exit. Only the standard, pointer-free WM_CLOSE message is
+        // opened through UIPI; the named mutex remains the final handoff proof.
+        if let Err(error) =
+            unsafe { ChangeWindowMessageFilterEx(hwnd, WM_CLOSE, MSGFLT_ALLOW, None) }
+        {
+            unsafe {
+                let _ = DestroyWindow(hwnd);
+            }
+            return Err(error).context("allow cross-integrity instance handoff");
+        }
         let timer = unsafe { SetTimer(Some(hwnd), UI_TIMER_ID, 100, None) };
         if timer == 0 {
             unsafe {

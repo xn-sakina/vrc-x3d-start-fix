@@ -2,6 +2,7 @@ use std::{
     cell::{Cell, RefCell},
     panic::{AssertUnwindSafe, catch_unwind},
     thread,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result};
@@ -40,6 +41,8 @@ pub struct TrayUi {
     autostart_state: Cell<Option<bool>>,
     autostart_phase: Cell<AutoStartPhase>,
     autostart_result: RefCell<Option<Receiver<autostart::UpdateResult>>>,
+    autostart_started_at: Cell<Option<Instant>>,
+    autostart_retry_target: Cell<Option<bool>>,
     open_logs_item: MenuItem,
     exit_item: MenuItem,
     command_tx: Sender<SupervisorCommand>,
@@ -52,6 +55,8 @@ enum AutoStartPhase {
     Applying,
     Failed,
 }
+
+const AUTOSTART_UI_TIMEOUT: Duration = Duration::from_secs(30);
 
 struct StatusIcons {
     ready: Icon,
@@ -206,6 +211,8 @@ impl TrayUi {
             autostart_state: Cell::new(None),
             autostart_phase: Cell::new(AutoStartPhase::Checking),
             autostart_result: RefCell::new(None),
+            autostart_started_at: Cell::new(None),
+            autostart_retry_target: Cell::new(None),
             open_logs_item,
             exit_item,
             command_tx,
@@ -228,7 +235,10 @@ impl TrayUi {
                 // the last verified state back until Windows confirms the edit.
                 self.autostart_item
                     .set_checked(self.autostart_state.get().unwrap_or(false));
-                let desired = self.autostart_state.get().is_none_or(|enabled| !enabled);
+                let desired = self
+                    .autostart_retry_target
+                    .get()
+                    .unwrap_or_else(|| self.autostart_state.get().is_none_or(|enabled| !enabled));
                 self.start_autostart_change(desired);
                 ui_changed = true;
             } else if event.id() == self.open_logs_item.id() {
@@ -350,6 +360,7 @@ impl TrayUi {
             return;
         }
         self.autostart_phase.set(AutoStartPhase::Checking);
+        self.autostart_retry_target.set(None);
         self.refresh_autostart_visual();
         self.start_autostart_worker(autostart::query_current_executable_verified);
     }
@@ -359,6 +370,7 @@ impl TrayUi {
             return;
         }
         self.autostart_phase.set(AutoStartPhase::Applying);
+        self.autostart_retry_target.set(Some(enabled));
         self.refresh_autostart_visual();
         self.start_autostart_worker(move || autostart::set_current_executable_and_verify(enabled));
     }
@@ -371,6 +383,7 @@ impl TrayUi {
             return;
         }
         self.autostart_item.set_enabled(false);
+        self.autostart_started_at.set(Some(Instant::now()));
         let (result_tx, result_rx) = bounded(1);
         match thread::Builder::new()
             .name("autostart-operation".into())
@@ -388,6 +401,7 @@ impl TrayUi {
                 *self.autostart_result.borrow_mut() = Some(result_rx);
             }
             Err(error) => {
+                self.autostart_started_at.set(None);
                 tracing::warn!(event = "autostart_worker_spawn_failed", error = %error);
                 self.autostart_phase.set(AutoStartPhase::Failed);
                 self.refresh_autostart_visual();
@@ -396,6 +410,7 @@ impl TrayUi {
     }
 
     fn poll_autostart_result(&self) -> bool {
+        let mut timed_out = false;
         let result = {
             let slot = self.autostart_result.borrow();
             let Some(receiver) = slot.as_ref() else {
@@ -403,14 +418,28 @@ impl TrayUi {
             };
             match receiver.try_recv() {
                 Ok(result) => Some(result),
-                Err(TryRecvError::Empty) => return false,
+                Err(TryRecvError::Empty) => {
+                    if self
+                        .autostart_started_at
+                        .get()
+                        .is_none_or(|started| started.elapsed() < AUTOSTART_UI_TIMEOUT)
+                    {
+                        return false;
+                    }
+                    tracing::warn!(event = "autostart_operation_timed_out");
+                    timed_out = true;
+                    None
+                }
                 Err(TryRecvError::Disconnected) => None,
             }
         };
         self.autostart_result.borrow_mut().take();
+        self.autostart_started_at.set(None);
 
         let Some(result) = result else {
-            tracing::warn!(event = "autostart_worker_disconnected");
+            if !timed_out {
+                tracing::warn!(event = "autostart_worker_disconnected");
+            }
             self.autostart_state.set(None);
             self.autostart_phase.set(AutoStartPhase::Failed);
             self.refresh_autostart_visual();
@@ -422,6 +451,7 @@ impl TrayUi {
             tracing::warn!(event = "autostart_operation_failed", error = %error);
             self.autostart_phase.set(AutoStartPhase::Failed);
         } else {
+            self.autostart_retry_target.set(None);
             self.autostart_phase.set(AutoStartPhase::Ready);
             tracing::info!(
                 event = "autostart_state_verified",

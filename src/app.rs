@@ -106,8 +106,13 @@ fn acquire_single_instance() -> Result<Option<SingleInstance>> {
     drop(initial);
 
     let deadline = Instant::now() + HANDOFF_TIMEOUT;
+    let mut handoff_error = None;
     while Instant::now() < deadline {
-        crate::platform::windows::instance_handoff::request_existing_instance_shutdown();
+        if let Err(error) =
+            crate::platform::windows::instance_handoff::request_existing_instance_shutdown()
+        {
+            handoff_error = Some(error);
+        }
         std::thread::sleep(RETRY_INTERVAL);
 
         let candidate = SingleInstance::new(MUTEX_NAME).context("retry single-instance mutex")?;
@@ -116,6 +121,9 @@ fn acquire_single_instance() -> Result<Option<SingleInstance>> {
         }
     }
 
+    if let Some(error) = handoff_error {
+        return Err(error).context("request existing instance shutdown");
+    }
     message_box::second_instance();
     Ok(None)
 }
