@@ -3,6 +3,7 @@ app:
   second_instance: "VRChat X3D Start Fix is already running."
   fatal_startup: "VRChat X3D Start Fix could not start. Check the logs."
 menu:
+  version: "Version"
   status_label: "Status"
   config_label: "Current settings"
   profile: "Fix strength"
@@ -12,6 +13,10 @@ menu:
   coverage: "CPU core selection"
   reset: "Reset to defaults"
   language: "Language"
+  autostart: "Start automatically at sign-in"
+  autostart_checking: "Start automatically at sign-in (checking…)"
+  autostart_confirming: "Start automatically at sign-in (awaiting system confirmation…)"
+  autostart_failed: "Start automatically at sign-in (status unknown; click to retry)"
   open_logs: "Open log folder"
   exit: "Exit"
 profile:

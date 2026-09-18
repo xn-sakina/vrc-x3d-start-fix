@@ -1,11 +1,18 @@
+use std::{
+    cell::{Cell, RefCell},
+    panic::{AssertUnwindSafe, catch_unwind},
+    thread,
+};
+
 use anyhow::{Context, Result};
-use crossbeam_channel::Sender;
+use crossbeam_channel::{Receiver, Sender, TryRecvError, bounded};
 use tray_icon::{
     Icon, TrayIcon, TrayIconBuilder,
     menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu},
 };
 
 use crate::{
+    autostart,
     config::{AppConfig, CpuCoverage, DisturbanceParams, Language, Profile},
     supervisor::{SupervisorCommand, UiStatus, UiUpdate},
 };
@@ -14,6 +21,7 @@ pub struct TrayUi {
     tray: TrayIcon,
     status_icons: StatusIcons,
     header: MenuItem,
+    version_item: MenuItem,
     status_item: MenuItem,
     config_item: MenuItem,
     profile_menu: Submenu,
@@ -28,9 +36,21 @@ pub struct TrayUi {
     reset_item: MenuItem,
     language_menu: Submenu,
     language_items: Vec<(Language, CheckMenuItem)>,
+    autostart_item: CheckMenuItem,
+    autostart_state: Cell<Option<bool>>,
+    autostart_phase: Cell<AutoStartPhase>,
+    autostart_result: RefCell<Option<Receiver<autostart::UpdateResult>>>,
     open_logs_item: MenuItem,
     exit_item: MenuItem,
     command_tx: Sender<SupervisorCommand>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AutoStartPhase {
+    Checking,
+    Ready,
+    Applying,
+    Failed,
 }
 
 struct StatusIcons {
@@ -69,9 +89,10 @@ impl TrayUi {
         let status_icons = StatusIcons::load()?;
         let menu = Menu::new();
         let header = MenuItem::new(rust_i18n::t!("app.name"), false, None);
+        let version_item = MenuItem::new("", false, None);
         let status_item = MenuItem::new("", false, None);
         let config_item = MenuItem::new("", false, None);
-        menu.append_items(&[&header, &status_item, &config_item])?;
+        menu.append_items(&[&header, &version_item, &status_item, &config_item])?;
         menu.append(&PredefinedMenuItem::separator())?;
 
         let profile_menu = Submenu::new(rust_i18n::t!("menu.profile"), true);
@@ -143,6 +164,11 @@ impl TrayUi {
         menu.append(&language_menu)?;
         menu.append(&PredefinedMenuItem::separator())?;
 
+        let autostart_item =
+            CheckMenuItem::new(rust_i18n::t!("menu.autostart"), false, false, None);
+        menu.append(&autostart_item)?;
+        menu.append(&PredefinedMenuItem::separator())?;
+
         let open_logs_item = MenuItem::new(rust_i18n::t!("menu.open_logs"), true, None);
         menu.append(&open_logs_item)?;
         menu.append(&PredefinedMenuItem::separator())?;
@@ -161,6 +187,7 @@ impl TrayUi {
             tray,
             status_icons,
             header,
+            version_item,
             status_item,
             config_item,
             profile_menu,
@@ -175,6 +202,10 @@ impl TrayUi {
             reset_item,
             language_menu,
             language_items,
+            autostart_item,
+            autostart_state: Cell::new(None),
+            autostart_phase: Cell::new(AutoStartPhase::Checking),
+            autostart_result: RefCell::new(None),
             open_logs_item,
             exit_item,
             command_tx,
@@ -183,13 +214,23 @@ impl TrayUi {
             status: UiStatus::Waiting,
             config: config.clone(),
         });
+        ui.start_autostart_query();
         Ok(ui)
     }
 
-    pub fn poll_menu_events(&self) {
+    pub fn poll_menu_events(&self) -> bool {
+        let mut ui_changed = self.poll_autostart_result();
         while let Ok(event) = MenuEvent::receiver().try_recv() {
             if event.id() == self.exit_item.id() {
                 let _ = self.command_tx.send(SupervisorCommand::Shutdown);
+            } else if event.id() == self.autostart_item.id() {
+                // Native check items toggle before delivering their event. Put
+                // the last verified state back until Windows confirms the edit.
+                self.autostart_item
+                    .set_checked(self.autostart_state.get().unwrap_or(false));
+                let desired = self.autostart_state.get().is_none_or(|enabled| !enabled);
+                self.start_autostart_change(desired);
+                ui_changed = true;
             } else if event.id() == self.open_logs_item.id() {
                 let _ = self.command_tx.try_send(SupervisorCommand::OpenLogFolder);
             } else if event.id() == self.reset_item.id() {
@@ -234,6 +275,7 @@ impl TrayUi {
                     .try_send(SupervisorCommand::SetCoverage(*coverage));
             }
         }
+        ui_changed
     }
 
     pub fn apply_update(&self, update: &UiUpdate) {
@@ -244,6 +286,11 @@ impl TrayUi {
             tracing::warn!(event = "tray_icon_update_failed", error = %error);
         }
         self.header.set_text(rust_i18n::t!("app.name"));
+        self.version_item.set_text(format!(
+            "{}: v{}",
+            rust_i18n::t!("menu.version"),
+            env!("CARGO_PKG_VERSION")
+        ));
         self.profile_menu.set_text(rust_i18n::t!("menu.profile"));
         self.advanced_menu.set_text(rust_i18n::t!("menu.advanced"));
         self.duty_menu.set_text(rust_i18n::t!("menu.duty"));
@@ -251,6 +298,7 @@ impl TrayUi {
         self.coverage_menu.set_text(rust_i18n::t!("menu.coverage"));
         self.reset_item.set_text(rust_i18n::t!("menu.reset"));
         self.language_menu.set_text(rust_i18n::t!("menu.language"));
+        self.refresh_autostart_visual();
         self.open_logs_item
             .set_text(rust_i18n::t!("menu.open_logs"));
         self.exit_item.set_text(rust_i18n::t!("menu.exit"));
@@ -295,6 +343,106 @@ impl TrayUi {
         for (language, item) in &self.language_items {
             item.set_checked(effective_language == *language);
         }
+    }
+
+    fn start_autostart_query(&self) {
+        if self.autostart_result.borrow().is_some() {
+            return;
+        }
+        self.autostart_phase.set(AutoStartPhase::Checking);
+        self.refresh_autostart_visual();
+        self.start_autostart_worker(autostart::query_current_executable_verified);
+    }
+
+    fn start_autostart_change(&self, enabled: bool) {
+        if self.autostart_result.borrow().is_some() {
+            return;
+        }
+        self.autostart_phase.set(AutoStartPhase::Applying);
+        self.refresh_autostart_visual();
+        self.start_autostart_worker(move || autostart::set_current_executable_and_verify(enabled));
+    }
+
+    fn start_autostart_worker(
+        &self,
+        operation: impl FnOnce() -> autostart::UpdateResult + Send + 'static,
+    ) {
+        if self.autostart_result.borrow().is_some() {
+            return;
+        }
+        self.autostart_item.set_enabled(false);
+        let (result_tx, result_rx) = bounded(1);
+        match thread::Builder::new()
+            .name("autostart-operation".into())
+            .spawn(move || {
+                let result = catch_unwind(AssertUnwindSafe(operation)).unwrap_or_else(|_| {
+                    autostart::UpdateResult {
+                        enabled_for_current_executable: None,
+                        error: Some("autostart operation panicked".into()),
+                    }
+                });
+                let _ = result_tx.send(result);
+            }) {
+            Ok(handle) => {
+                drop(handle);
+                *self.autostart_result.borrow_mut() = Some(result_rx);
+            }
+            Err(error) => {
+                tracing::warn!(event = "autostart_worker_spawn_failed", error = %error);
+                self.autostart_phase.set(AutoStartPhase::Failed);
+                self.refresh_autostart_visual();
+            }
+        }
+    }
+
+    fn poll_autostart_result(&self) -> bool {
+        let result = {
+            let slot = self.autostart_result.borrow();
+            let Some(receiver) = slot.as_ref() else {
+                return false;
+            };
+            match receiver.try_recv() {
+                Ok(result) => Some(result),
+                Err(TryRecvError::Empty) => return false,
+                Err(TryRecvError::Disconnected) => None,
+            }
+        };
+        self.autostart_result.borrow_mut().take();
+
+        let Some(result) = result else {
+            tracing::warn!(event = "autostart_worker_disconnected");
+            self.autostart_state.set(None);
+            self.autostart_phase.set(AutoStartPhase::Failed);
+            self.refresh_autostart_visual();
+            return true;
+        };
+        self.autostart_state
+            .set(result.enabled_for_current_executable);
+        if let Some(error) = result.error {
+            tracing::warn!(event = "autostart_operation_failed", error = %error);
+            self.autostart_phase.set(AutoStartPhase::Failed);
+        } else {
+            self.autostart_phase.set(AutoStartPhase::Ready);
+            tracing::info!(
+                event = "autostart_state_verified",
+                enabled = self.autostart_state.get().unwrap_or(false)
+            );
+        }
+        self.refresh_autostart_visual();
+        true
+    }
+
+    fn refresh_autostart_visual(&self) {
+        self.autostart_item
+            .set_checked(self.autostart_state.get().unwrap_or(false));
+        let (label, enabled) = match self.autostart_phase.get() {
+            AutoStartPhase::Checking => (rust_i18n::t!("menu.autostart_checking"), false),
+            AutoStartPhase::Applying => (rust_i18n::t!("menu.autostart_confirming"), false),
+            AutoStartPhase::Failed => (rust_i18n::t!("menu.autostart_failed"), true),
+            AutoStartPhase::Ready => (rust_i18n::t!("menu.autostart"), true),
+        };
+        self.autostart_item.set_text(label);
+        self.autostart_item.set_enabled(enabled);
     }
 }
 

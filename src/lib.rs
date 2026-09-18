@@ -10,6 +10,8 @@ pub mod logging;
 #[cfg(target_os = "windows")]
 pub mod app;
 #[cfg(target_os = "windows")]
+pub mod autostart;
+#[cfg(target_os = "windows")]
 pub mod monitor;
 #[cfg(target_os = "windows")]
 pub mod platform;

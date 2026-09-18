@@ -1,4 +1,10 @@
-use std::{cell::Cell, panic, rc::Rc, thread::JoinHandle, time::Duration};
+use std::{
+    cell::Cell,
+    panic,
+    rc::Rc,
+    thread::JoinHandle,
+    time::{Duration, Instant},
+};
 
 use anyhow::{Context, Result};
 use crossbeam_channel::{TryRecvError, bounded};
@@ -13,16 +19,14 @@ use crate::{
 };
 
 pub fn run() -> Result<()> {
+    crate::i18n::initialize(None);
+    let Some(_instance) = acquire_single_instance()? else {
+        return Ok(());
+    };
+
     let store = ConfigStore::discover().context("locate configuration")?;
     let loaded = store.load_or_recover().context("load configuration")?;
     crate::i18n::initialize(loaded.config.language_override);
-
-    let instance =
-        SingleInstance::new("Local\\VRChatX3DStartFix").context("create single-instance mutex")?;
-    if !instance.is_single() {
-        message_box::second_instance();
-        return Ok(());
-    }
 
     let guards = logging::initialize().context("initialize logging")?;
     if let Some(path) = loaded.invalid_backup.as_ref() {
@@ -57,8 +61,7 @@ pub fn run() -> Result<()> {
     let shutdown_complete = Rc::new(Cell::new(false));
     let ui_shutdown_complete = Rc::clone(&shutdown_complete);
     event_loop.set_tick_handler(move || {
-        let mut ui_changed = false;
-        tray.poll_menu_events();
+        let mut ui_changed = tray.poll_menu_events();
         loop {
             match update_rx.try_recv() {
                 Ok(update) => {
@@ -89,6 +92,32 @@ pub fn run() -> Result<()> {
     supervisor.shutdown_and_join()?;
     drop(guards);
     Ok(())
+}
+
+fn acquire_single_instance() -> Result<Option<SingleInstance>> {
+    const MUTEX_NAME: &str = "Local\\VRChatX3DStartFix";
+    const HANDOFF_TIMEOUT: Duration = Duration::from_secs(8);
+    const RETRY_INTERVAL: Duration = Duration::from_millis(75);
+
+    let initial = SingleInstance::new(MUTEX_NAME).context("create single-instance mutex")?;
+    if initial.is_single() {
+        return Ok(Some(initial));
+    }
+    drop(initial);
+
+    let deadline = Instant::now() + HANDOFF_TIMEOUT;
+    while Instant::now() < deadline {
+        crate::platform::windows::instance_handoff::request_existing_instance_shutdown();
+        std::thread::sleep(RETRY_INTERVAL);
+
+        let candidate = SingleInstance::new(MUTEX_NAME).context("retry single-instance mutex")?;
+        if candidate.is_single() {
+            return Ok(Some(candidate));
+        }
+    }
+
+    message_box::second_instance();
+    Ok(None)
 }
 
 struct SupervisorGuard {

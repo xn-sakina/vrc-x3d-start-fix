@@ -3,6 +3,7 @@ app:
   second_instance: "VRChat X3D 启动修复已在运行。"
   fatal_startup: "VRChat X3D 启动修复无法启动，请查看日志。"
 menu:
+  version: "版本"
   status_label: "状态"
   config_label: "当前设置"
   profile: "修复强度"
@@ -12,6 +13,10 @@ menu:
   coverage: "CPU 核心范围"
   reset: "恢复默认设置"
   language: "语言"
+  autostart: "开机自启动"
+  autostart_checking: "开机自启动（正在检查…）"
+  autostart_confirming: "开机自启动（正在等待系统确认…）"
+  autostart_failed: "开机自启动（状态未知，点击重试）"
   open_logs: "打开日志目录"
   exit: "退出"
 profile:
