@@ -66,7 +66,12 @@ mod tests {
                 let status = rust_i18n::t!(status_key, locale = locale);
                 let tooltip = rust_i18n::t!("tooltip.format", locale = locale, status = status);
                 assert!(!tooltip.contains(['\n', '\r']), "{locale}: {tooltip}");
-                assert!(tooltip.chars().count() <= 36, "{locale}: {tooltip}");
+                let app_name = rust_i18n::t!("app.name", locale = locale);
+                assert!(
+                    tooltip.starts_with(app_name.as_ref()),
+                    "{locale}: {tooltip}"
+                );
+                assert!(tooltip.chars().count() <= 48, "{locale}: {tooltip}");
             }
         }
     }

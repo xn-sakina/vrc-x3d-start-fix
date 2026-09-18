@@ -18,6 +18,7 @@ menu:
   autostart_confirming: "登录时自动启动（等待 Windows 确认）"
   autostart_failed: "登录时自动启动（检查失败，选择后重试）"
   open_logs: "打开日志文件夹"
+  open_github: "在 GitHub 上查看项目"
   exit: "退出"
 profile:
   option_format: "%{name}（%{duty}% 负载，%{duration} 秒）"
@@ -39,7 +40,7 @@ status:
   unknown: "未能确认 VRChat 是否正常启动"
   shutting_down: "正在退出"
 tooltip:
-  format: "X3D 启动修复：%{status}"
+  format: "VRChat X3D 启动修复：%{status}"
   waiting: "就绪"
   detected: "VRChat 启动中"
   disturbing: "启动修复运行中"

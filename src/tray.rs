@@ -44,6 +44,7 @@ pub struct TrayUi {
     autostart_started_at: Cell<Option<Instant>>,
     autostart_retry_target: Cell<Option<bool>>,
     open_logs_item: MenuItem,
+    open_github_item: MenuItem,
     exit_item: MenuItem,
     command_tx: Sender<SupervisorCommand>,
 }
@@ -175,6 +176,8 @@ impl TrayUi {
 
         let open_logs_item = MenuItem::new(rust_i18n::t!("menu.open_logs"), true, None);
         menu.append(&open_logs_item)?;
+        let open_github_item = MenuItem::new(rust_i18n::t!("menu.open_github"), true, None);
+        menu.append(&open_github_item)?;
         menu.append(&PredefinedMenuItem::separator())?;
         let exit_item = MenuItem::new(rust_i18n::t!("menu.exit"), true, None);
         menu.append(&exit_item)?;
@@ -213,6 +216,7 @@ impl TrayUi {
             autostart_started_at: Cell::new(None),
             autostart_retry_target: Cell::new(None),
             open_logs_item,
+            open_github_item,
             exit_item,
             command_tx,
         };
@@ -242,6 +246,10 @@ impl TrayUi {
                 ui_changed = true;
             } else if event.id() == self.open_logs_item.id() {
                 let _ = self.command_tx.try_send(SupervisorCommand::OpenLogFolder);
+            } else if event.id() == self.open_github_item.id() {
+                let _ = self
+                    .command_tx
+                    .try_send(SupervisorCommand::OpenProjectGithub);
             } else if event.id() == self.reset_item.id() {
                 let _ = self.command_tx.try_send(SupervisorCommand::ResetDefaults);
             } else if let Some((language, _)) = self
@@ -309,6 +317,8 @@ impl TrayUi {
         self.refresh_autostart_visual();
         self.open_logs_item
             .set_text(rust_i18n::t!("menu.open_logs"));
+        self.open_github_item
+            .set_text(rust_i18n::t!("menu.open_github"));
         self.exit_item.set_text(rust_i18n::t!("menu.exit"));
 
         let status_text = rust_i18n::t!(update.status.locale_key()).to_string();

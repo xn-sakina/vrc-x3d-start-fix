@@ -18,6 +18,7 @@ menu:
   autostart_confirming: "Start at sign-in (waiting for Windows)"
   autostart_failed: "Start at sign-in (check failed; select to retry)"
   open_logs: "Open log folder"
+  open_github: "View project on GitHub"
   exit: "Exit"
 profile:
   option_format: "%{name} — %{duty}% load, %{duration} sec"
@@ -39,7 +40,7 @@ status:
   unknown: "Couldn't confirm VRChat startup"
   shutting_down: "Exiting"
 tooltip:
-  format: "X3D Start Fix: %{status}"
+  format: "VRChat X3D Start Fix: %{status}"
   waiting: "Ready"
   detected: "VRChat starting"
   disturbing: "Startup fix running"

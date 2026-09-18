@@ -19,6 +19,7 @@ use crate::{
 const IDLE_POLL: Duration = Duration::from_millis(250);
 const ACTIVE_POLL: Duration = Duration::from_millis(100);
 const CPU_LOG_INTERVAL: Duration = Duration::from_secs(1);
+const PROJECT_GITHUB_URL: &str = "https://github.com/xn-sakina/vrc-x3d-start-fix";
 
 #[derive(Debug, Clone)]
 pub enum SupervisorCommand {
@@ -29,6 +30,7 @@ pub enum SupervisorCommand {
     SetLanguage(Language),
     ResetDefaults,
     OpenLogFolder,
+    OpenProjectGithub,
     Shutdown,
 }
 
@@ -173,6 +175,16 @@ fn run(
             Ok(SupervisorCommand::OpenLogFolder) => {
                 if let Err(error) = open::that(&log_dir) {
                     tracing::error!(event = "open_log_folder_failed", error = %error, path = %log_dir.display());
+                }
+                continue;
+            }
+            Ok(SupervisorCommand::OpenProjectGithub) => {
+                if let Err(error) = open::that(PROJECT_GITHUB_URL) {
+                    tracing::error!(
+                        event = "open_project_github_failed",
+                        error = %error,
+                        url = PROJECT_GITHUB_URL
+                    );
                 }
                 continue;
             }
@@ -425,7 +437,9 @@ fn apply_config_command(config: &mut AppConfig, command: SupervisorCommand) -> b
         SupervisorCommand::SetCoverage(coverage) => config.set_coverage(coverage),
         SupervisorCommand::SetLanguage(language) => config.set_language(language),
         SupervisorCommand::ResetDefaults => config.reset(),
-        SupervisorCommand::OpenLogFolder | SupervisorCommand::Shutdown => return false,
+        SupervisorCommand::OpenLogFolder
+        | SupervisorCommand::OpenProjectGithub
+        | SupervisorCommand::Shutdown => return false,
     }
     true
 }
