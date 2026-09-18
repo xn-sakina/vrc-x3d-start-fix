@@ -104,8 +104,7 @@ impl TrayUi {
         let profile_items = Profile::PRESETS
             .into_iter()
             .map(|profile| {
-                let item =
-                    CheckMenuItem::new(rust_i18n::t!(profile.locale_key()), true, false, None);
+                let item = CheckMenuItem::new(profile_option_label(profile), true, false, None);
                 profile_menu.append(&item)?;
                 Ok((profile, item))
             })
@@ -183,7 +182,7 @@ impl TrayUi {
         let tray = TrayIconBuilder::new()
             .with_menu(Box::new(menu))
             .with_menu_on_left_click(false)
-            .with_tooltip(rust_i18n::t!("app.name"))
+            .with_tooltip(tooltip_text(&UiStatus::Waiting))
             .with_icon(status_icons.for_status(&UiStatus::Waiting).clone())
             .build()
             .context("create Windows tray icon")?;
@@ -296,10 +295,9 @@ impl TrayUi {
             tracing::warn!(event = "tray_icon_update_failed", error = %error);
         }
         self.header.set_text(rust_i18n::t!("app.name"));
-        self.version_item.set_text(format!(
-            "{}: v{}",
-            rust_i18n::t!("menu.version"),
-            env!("CARGO_PKG_VERSION")
+        self.version_item.set_text(rust_i18n::t!(
+            "menu.version_format",
+            version = env!("CARGO_PKG_VERSION")
         ));
         self.profile_menu.set_text(rust_i18n::t!("menu.profile"));
         self.advanced_menu.set_text(rust_i18n::t!("menu.advanced"));
@@ -314,25 +312,21 @@ impl TrayUi {
         self.exit_item.set_text(rust_i18n::t!("menu.exit"));
 
         let status_text = rust_i18n::t!(update.status.locale_key()).to_string();
-        self.status_item.set_text(format!(
-            "{}: {status_text}",
-            rust_i18n::t!("menu.status_label")
-        ));
+        self.status_item
+            .set_text(rust_i18n::t!("menu.status_format", status = status_text));
         let params = update.config.resolved_params();
         let profile = rust_i18n::t!(update.config.profile.locale_key());
-        self.config_item.set_text(format!(
-            "{}: {profile} / CPU {}% / {} {}",
-            rust_i18n::t!("menu.config_label"),
-            params.duty_percent,
-            params.hard_stop_secs,
-            rust_i18n::t!("unit.seconds_short")
+        self.config_item.set_text(rust_i18n::t!(
+            "menu.config_format",
+            profile = profile,
+            duty = params.duty_percent,
+            duration = params.hard_stop_secs
         ));
-        let _ = self.tray.set_tooltip(Some(format!(
-            "{} — {status_text}",
-            rust_i18n::t!("app.name")
-        )));
+        if let Err(error) = self.tray.set_tooltip(Some(tooltip_text(&update.status))) {
+            tracing::warn!(event = "tray_tooltip_update_failed", error = %error);
+        }
         for (profile, item) in &self.profile_items {
-            item.set_text(rust_i18n::t!(profile.locale_key()));
+            item.set_text(profile_option_label(*profile));
             item.set_checked(update.config.profile == *profile);
         }
         for (duty, item) in &self.duty_items {
@@ -474,6 +468,25 @@ impl TrayUi {
         self.autostart_item.set_text(label);
         self.autostart_item.set_enabled(enabled);
     }
+}
+
+fn tooltip_text(status: &UiStatus) -> String {
+    rust_i18n::t!(
+        "tooltip.format",
+        status = rust_i18n::t!(status.tooltip_locale_key())
+    )
+    .into_owned()
+}
+
+fn profile_option_label(profile: Profile) -> String {
+    let params = profile.params();
+    rust_i18n::t!(
+        "profile.option_format",
+        name = rust_i18n::t!(profile.locale_key()),
+        duty = params.duty_percent,
+        duration = params.hard_stop_secs
+    )
+    .into_owned()
 }
 
 fn load_icon(bytes: &[u8], label: &str) -> Result<Icon> {

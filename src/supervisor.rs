@@ -56,6 +56,18 @@ impl UiStatus {
             Self::ShuttingDown | Self::ShutdownComplete => "status.shutting_down",
         }
     }
+
+    pub fn tooltip_locale_key(&self) -> &'static str {
+        match self {
+            Self::Waiting => "tooltip.waiting",
+            Self::Detected => "tooltip.detected",
+            Self::Disturbing => "tooltip.disturbing",
+            Self::Success => "tooltip.success",
+            Self::Failed => "tooltip.failed",
+            Self::Unknown => "tooltip.unknown",
+            Self::ShuttingDown | Self::ShutdownComplete => "tooltip.shutting_down",
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

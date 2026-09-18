@@ -48,4 +48,26 @@ mod tests {
         assert_eq!(language_for_locale("zh-Hans"), Language::ZhCn);
         assert_eq!(language_for_locale("en-US"), Language::En);
     }
+
+    #[test]
+    fn tray_tooltips_stay_short_and_single_line() {
+        let status_keys = [
+            "tooltip.waiting",
+            "tooltip.detected",
+            "tooltip.disturbing",
+            "tooltip.success",
+            "tooltip.failed",
+            "tooltip.unknown",
+            "tooltip.shutting_down",
+        ];
+
+        for locale in ["en", "zh-CN"] {
+            for status_key in status_keys {
+                let status = rust_i18n::t!(status_key, locale = locale);
+                let tooltip = rust_i18n::t!("tooltip.format", locale = locale, status = status);
+                assert!(!tooltip.contains(['\n', '\r']), "{locale}: {tooltip}");
+                assert!(tooltip.chars().count() <= 36, "{locale}: {tooltip}");
+            }
+        }
+    }
 }
