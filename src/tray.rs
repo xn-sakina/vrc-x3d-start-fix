@@ -102,7 +102,12 @@ impl TrayUi {
         let duration_items = DisturbanceParams::DURATION_OPTIONS
             .into_iter()
             .map(|value| {
-                let item = CheckMenuItem::new(format!("{value} s"), true, false, None);
+                let item = CheckMenuItem::new(
+                    format!("{value} {}", rust_i18n::t!("unit.seconds_short")),
+                    true,
+                    false,
+                    None,
+                );
                 duration_menu.append(&item)?;
                 Ok((value, item))
             })
@@ -258,10 +263,11 @@ impl TrayUi {
         let params = update.config.resolved_params();
         let profile = rust_i18n::t!(update.config.profile.locale_key());
         self.config_item.set_text(format!(
-            "{}: {profile} {}% / {} s",
+            "{}: {profile} / CPU {}% / {} {}",
             rust_i18n::t!("menu.config_label"),
             params.duty_percent,
-            params.hard_stop_secs
+            params.hard_stop_secs,
+            rust_i18n::t!("unit.seconds_short")
         ));
         let _ = self.tray.set_tooltip(Some(format!(
             "{} — {status_text}",
@@ -275,6 +281,10 @@ impl TrayUi {
             item.set_checked(params.duty_percent == *duty);
         }
         for (duration, item) in &self.duration_items {
+            item.set_text(format!(
+                "{duration} {}",
+                rust_i18n::t!("unit.seconds_short")
+            ));
             item.set_checked(params.hard_stop_secs == *duration);
         }
         for (coverage, item) in &self.coverage_items {
