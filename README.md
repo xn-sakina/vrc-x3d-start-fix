@@ -10,7 +10,7 @@
 
 ## Download
 
-[Download the latest release]()
+[Download the latest release](https://github.com/xn-sakina/vrc-x3d-start-fix/releases)
 
 Download the app and open it. There is nothing to install or set up.
 
