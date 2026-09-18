@@ -1,6 +1,6 @@
 [package]
 name = "vrchat-x3d-start-fix"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2024"
 description = "A Windows tray utility that perturbs CPU scheduling during VRChat startup"
 license = "MIT"
