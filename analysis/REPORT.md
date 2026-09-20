@@ -197,6 +197,10 @@ Current reports do not support a single engine version as the cause. The error h
 
 Different runtime versions can still change how often the race occurs. Thread handling, allocation behavior, and task timing can widen or narrow the vulnerable window. Better results on one VRChat branch do not prove that another Unity version created the bug.
 
+### Do Defender and EAC affect the startup failure rate?
+
+Yes, but they are not useful factors to focus on. EAC adds work to the launch process, while Defender and other antivirus software add background activity when enabled and remove that activity when disabled. These changes affect core availability, thread scheduling, and the timing of the first GC, which can raise or lower the chance of hitting the race. The underlying problem remains VRChat's startup thread race, so there is no need to change these security settings.
+
 ## Disclaimer
 
 This report presents an independent technical hypothesis based on public user reports, observed workaround behavior, and documented runtime behavior. It does not have access to VRChat source code, Unity internal diagnostics, or a complete controlled crash sample. The explanation may be incomplete, outdated, partly incorrect, or entirely incorrect.
